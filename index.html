@@ -23,76 +23,87 @@ const {useState,useEffect,useCallback} = React;
 
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwbQwnwCm3sdFI4WdflMy-KrcWLsLxmLNpw1Ag_GemBxO1IjIxuusrusZfwH4B9NsQ/exec';
 const BASELINE = 50000;
+const CACHE_KEY = 'lab-ledger-cache';
 const fmt = n => new Intl.NumberFormat('ko-KR').format(Math.round(n));
 const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,5);
 
-async function loadData(){
-  const r = await fetch(SCRIPT_URL);
-  const data = await r.json();
-  const members = (data.members||[]).map(m=>({...m, balance:Number(m.balance)||0}));
-  const transactions = (data.transactions||[]).map(t=>({
+function parseSheet(data){
+  const members=(data.members||[]).map(m=>({...m,balance:Number(m.balance)||0}));
+  const transactions=(data.transactions||[]).map(t=>({
     ...t,
-    amount: Number(t.amount)||0,
-    amountPerPerson: Number(t.amountPerPerson)||0,
-    sharedAmount: Number(t.sharedAmount)||0,
-    memberIds: t.memberIds ? String(t.memberIds).split(',').filter(Boolean) : [],
-    participants: (() => { try { return JSON.parse(String(t.participants||'[]')); } catch { return []; } })(),
+    amount:Number(t.amount)||0,
+    amountPerPerson:Number(t.amountPerPerson)||0,
+    sharedAmount:Number(t.sharedAmount)||0,
+    memberIds:t.memberIds?String(t.memberIds).split(',').filter(Boolean):[],
+    participants:(()=>{try{return JSON.parse(String(t.participants||'[]'));}catch{return[];}})(),
   }));
-  return {members, transactions};
+  return{members,transactions};
 }
 
-async function saveData(members, transactions){
+async function fetchFromSheet(){
+  const r=await fetch(SCRIPT_URL);
+  const data=await r.json();
+  const result=parseSheet(data);
+  try{localStorage.setItem(CACHE_KEY,JSON.stringify(result));}catch{}
+  return result;
+}
+
+function loadCache(){
+  try{
+    const c=localStorage.getItem(CACHE_KEY);
+    return c?JSON.parse(c):null;
+  }catch{return null;}
+}
+
+async function saveData(members,transactions){
+  try{localStorage.setItem(CACHE_KEY,JSON.stringify({members,transactions}));}catch{}
   await fetch(SCRIPT_URL,{
-    method:'POST', mode:'no-cors',
-    body: JSON.stringify({action:'saveAll', members, transactions})
+    method:'POST',mode:'no-cors',
+    body:JSON.stringify({action:'saveAll',members,transactions})
   });
 }
 
 function computeChanges(txn){
   switch(txn.type){
-    case 'deposit':  return [{memberId:txn.memberId, delta:Number(txn.amount)}];
-    case 'withdraw': return [{memberId:txn.memberId, delta:-Number(txn.amount)}];
+    case 'deposit':  return [{memberId:txn.memberId,delta:Number(txn.amount)}];
+    case 'withdraw': return [{memberId:txn.memberId,delta:-Number(txn.amount)}];
     case 'transfer': return [
-      {memberId:txn.fromMemberId, delta:-Number(txn.amount)},
-      {memberId:txn.toMemberId,   delta:+Number(txn.amount)},
+      {memberId:txn.fromMemberId,delta:-Number(txn.amount)},
+      {memberId:txn.toMemberId,delta:+Number(txn.amount)},
     ];
-    case 'shared': {
-      const ids = txn.memberIds||[];
-      const per = Number(txn.amount)/ids.length;
-      return ids.map(id=>({memberId:id, delta:-per}));
+    case 'shared':{
+      const ids=txn.memberIds||[];
+      const per=Number(txn.amount)/ids.length;
+      return ids.map(id=>({memberId:id,delta:-per}));
     }
-    case 'delivery': {
-      const parts = txn.participants||[];
-      const sharedPer = parts.length>0 ? Number(txn.sharedAmount)/parts.length : 0;
-      const total = Number(txn.amount);
-      const pid = txn.payerId && txn.payerId!=='lab' ? txn.payerId : null;
+    case 'delivery':{
+      const parts=txn.participants||[];
+      const sharedPer=parts.length>0?Number(txn.sharedAmount)/parts.length:0;
+      const total=Number(txn.amount);
+      const pid=txn.payerId&&txn.payerId!=='lab'?txn.payerId:null;
       return parts.map(p=>{
-        const cost = Number(p.amount)+sharedPer;
-        return {memberId:p.id, delta: -cost + (p.id===pid ? total : 0)};
+        const cost=Number(p.amount)+sharedPer;
+        return{memberId:p.id,delta:-cost+(p.id===pid?total:0)};
       });
     }
-    default: return [];
+    default:return[];
   }
 }
 
 function Spinner(){
   return <span style={{display:'inline-block',width:15,height:15,border:'2px solid #ddd',borderTopColor:'#555',borderRadius:'50%',animation:'spin .6s linear infinite'}}/>
 }
-
 function Avatar({name,size=36}){
   const cols=[['#dbeafe','#1d4ed8'],['#dcfce7','#15803d'],['#fef3c7','#92400e'],['#fce7f3','#9d174d'],['#d1fae5','#065f46'],['#ede9fe','#5b21b6']];
   const [bg,fg]=cols[name.charCodeAt(0)%cols.length];
   return <div style={{width:size,height:size,borderRadius:'50%',background:bg,color:fg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:size*.38,fontWeight:600,flexShrink:0}}>{name.slice(0,1)}</div>;
 }
-
 function Chip({active,onClick,children,disabled}){
   return <button onClick={onClick} disabled={disabled} style={{padding:'7px 15px',border:active?'2px solid #111':'1px solid #ddd',borderRadius:20,background:active?'#111':disabled?'#f5f5f5':'#fff',color:active?'#fff':disabled?'#bbb':'#111',fontSize:13,fontWeight:active?500:400,transition:'all .15s'}}>{children}</button>;
 }
-
 function SectionLabel({children}){
   return <div style={{fontSize:12,color:'#999',marginBottom:9,fontWeight:600,letterSpacing:.4}}>{children}</div>;
 }
-
 function SaveButton({onClick,disabled,saving,done}){
   return(
     <button onClick={onClick} disabled={disabled||saving} style={{width:'100%',padding:'14px',border:'none',borderRadius:12,background:done?'#dcfce7':disabled||saving?'#f0f0f0':'#111',color:done?'#16a34a':disabled||saving?'#999':'#fff',fontSize:16,fontWeight:600,display:'flex',alignItems:'center',justifyContent:'center',gap:8,transition:'all .2s'}}>
@@ -174,12 +185,7 @@ function DepositWithdrawForm({type,members,transactions,onUpdate,saving}){
   };
   return(
     <div>
-      <div style={{marginBottom:18}}>
-        <SectionLabel>대상 멤버</SectionLabel>
-        <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
-          {members.map(m=><Chip key={m.id} active={selId===m.id} onClick={()=>setSelId(m.id)}>{m.name}</Chip>)}
-        </div>
-      </div>
+      <div style={{marginBottom:18}}><SectionLabel>대상 멤버</SectionLabel><div style={{display:'flex',flexWrap:'wrap',gap:8}}>{members.map(m=><Chip key={m.id} active={selId===m.id} onClick={()=>setSelId(m.id)}>{m.name}</Chip>)}</div></div>
       <div style={{marginBottom:18}}>
         <SectionLabel>금액</SectionLabel>
         <div style={{position:'relative'}}>
@@ -187,10 +193,7 @@ function DepositWithdrawForm({type,members,transactions,onUpdate,saving}){
           <span style={{position:'absolute',right:13,top:'50%',transform:'translateY(-50%)',color:'#999',fontSize:14,pointerEvents:'none'}}>원</span>
         </div>
       </div>
-      <div style={{marginBottom:22}}>
-        <SectionLabel>메모 (선택)</SectionLabel>
-        <input type="text" value={memo} onChange={e=>setMemo(e.target.value)} placeholder=""/>
-      </div>
+      <div style={{marginBottom:22}}><SectionLabel>메모 (선택)</SectionLabel><input type="text" value={memo} onChange={e=>setMemo(e.target.value)} placeholder=""/></div>
       <SaveButton onClick={handleSubmit} disabled={!selId||amtNum<=0} saving={saving} done={done}/>
     </div>
   );
@@ -208,10 +211,7 @@ function SharedForm({members,transactions,onUpdate,saving}){
   const per=ids.length>0?amtNum/ids.length:0;
   const handleSubmit=async()=>{
     if(amtNum<=0)return;
-    const newM=members.map(m=>{
-      const inc=ids.includes(m.id);
-      return inc?{...m,balance:m.balance-per}:m;
-    });
+    const newM=members.map(m=>ids.includes(m.id)?{...m,balance:m.balance-per}:m);
     const txn={id:uid(),date:new Date().toISOString(),type:'shared',amount:amtNum,memo,memberId:'',memberIds:ids,amountPerPerson:per,fromMemberId:'',toMemberId:'',participants:[],payerId:'',sharedAmount:0};
     await onUpdate(newM,[txn,...transactions]);
     setAmount('');setMemo('');setSelMembers([]);
@@ -232,12 +232,9 @@ function SharedForm({members,transactions,onUpdate,saving}){
           <input type="number" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0" min="0" style={{paddingRight:32,fontSize:20,fontWeight:600}}/>
           <span style={{position:'absolute',right:13,top:'50%',transform:'translateY(-50%)',color:'#999',fontSize:14,pointerEvents:'none'}}>원</span>
         </div>
-        {amtNum>0&&ids.length>0&&<div style={{fontSize:12,color:'#999',marginTop:5}}>1인당 {fmt(per)}원 ({ids.length}명)</div>}
+        {amtNum>0&&<div style={{fontSize:12,color:'#999',marginTop:5}}>1인당 {fmt(per)}원 ({ids.length}명)</div>}
       </div>
-      <div style={{marginBottom:22}}>
-        <SectionLabel>메모 (선택)</SectionLabel>
-        <input type="text" value={memo} onChange={e=>setMemo(e.target.value)} placeholder="간식비, 행사비 등..."/>
-      </div>
+      <div style={{marginBottom:22}}><SectionLabel>메모 (선택)</SectionLabel><input type="text" value={memo} onChange={e=>setMemo(e.target.value)} placeholder="간식비, 행사비 등..."/></div>
       <SaveButton onClick={handleSubmit} disabled={amtNum<=0} saving={saving} done={done}/>
     </div>
   );
@@ -266,18 +263,8 @@ function TransferForm({members,transactions,onUpdate,saving}){
   };
   return(
     <div>
-      <div style={{marginBottom:18}}>
-        <SectionLabel>보내는 사람</SectionLabel>
-        <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
-          {members.map(m=><Chip key={m.id} active={fromId===m.id} onClick={()=>{setFromId(m.id);if(toId===m.id)setToId('');}}>{m.name}</Chip>)}
-        </div>
-      </div>
-      <div style={{marginBottom:18}}>
-        <SectionLabel>받는 사람</SectionLabel>
-        <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
-          {members.map(m=><Chip key={m.id} active={toId===m.id} disabled={m.id===fromId} onClick={()=>setToId(m.id)}>{m.name}</Chip>)}
-        </div>
-      </div>
+      <div style={{marginBottom:18}}><SectionLabel>보내는 사람</SectionLabel><div style={{display:'flex',flexWrap:'wrap',gap:8}}>{members.map(m=><Chip key={m.id} active={fromId===m.id} onClick={()=>{setFromId(m.id);if(toId===m.id)setToId('');}}>{m.name}</Chip>)}</div></div>
+      <div style={{marginBottom:18}}><SectionLabel>받는 사람</SectionLabel><div style={{display:'flex',flexWrap:'wrap',gap:8}}>{members.map(m=><Chip key={m.id} active={toId===m.id} disabled={m.id===fromId} onClick={()=>setToId(m.id)}>{m.name}</Chip>)}</div></div>
       <div style={{marginBottom:18}}>
         <SectionLabel>금액</SectionLabel>
         <div style={{position:'relative'}}>
@@ -286,17 +273,11 @@ function TransferForm({members,transactions,onUpdate,saving}){
         </div>
         {fromName&&toName&&amtNum>0&&(
           <div style={{fontSize:12,color:'#999',marginTop:5,display:'flex',alignItems:'center',gap:6}}>
-            <span style={{fontWeight:600,color:'#dc2626'}}>{fromName}</span>
-            <span>→</span>
-            <span style={{fontWeight:600,color:'#16a34a'}}>{toName}</span>
-            <span>{fmt(amtNum)}원</span>
+            <span style={{fontWeight:600,color:'#dc2626'}}>{fromName}</span><span>→</span><span style={{fontWeight:600,color:'#16a34a'}}>{toName}</span><span>{fmt(amtNum)}원</span>
           </div>
         )}
       </div>
-      <div style={{marginBottom:22}}>
-        <SectionLabel>메모 (선택)</SectionLabel>
-        <input type="text" value={memo} onChange={e=>setMemo(e.target.value)} placeholder=""/>
-      </div>
+      <div style={{marginBottom:22}}><SectionLabel>메모 (선택)</SectionLabel><input type="text" value={memo} onChange={e=>setMemo(e.target.value)} placeholder=""/></div>
       <SaveButton onClick={handleSubmit} disabled={!fromId||!toId||amtNum<=0} saving={saving} done={done}/>
     </div>
   );
@@ -309,7 +290,6 @@ function DeliveryForm({members,transactions,onUpdate,saving}){
   const [payerId,setPayerId]=useState('lab');
   const [memo,setMemo]=useState('');
   const [done,setDone]=useState(false);
-
   const toggleM=id=>{
     setSelMembers(p=>{
       if(p.includes(id)){
@@ -318,46 +298,34 @@ function DeliveryForm({members,transactions,onUpdate,saving}){
         if(payerId===id)setPayerId('lab');
         return next;
       }
-      return [...p,id];
+      return[...p,id];
     });
   };
-
   const sharedNum=parseInt(sharedAmt)||0;
   const sharedPer=selMembers.length>0?sharedNum/selMembers.length:0;
   const indivTotal=selMembers.reduce((s,id)=>s+(parseInt(amounts[id])||0),0);
   const total=indivTotal+sharedNum;
-
   const preview=selMembers.map(id=>{
-    const memberAmt=parseInt(amounts[id])||0;
-    const cost=memberAmt+sharedPer;
+    const cost=(parseInt(amounts[id])||0)+sharedPer;
     const isPayer=id===payerId;
-    const delta=-cost+(isPayer?total:0);
-    return{id,cost,delta,isPayer};
+    return{id,cost,delta:-cost+(isPayer?total:0),isPayer};
   });
-
   const handleSubmit=async()=>{
     if(selMembers.length===0||total===0)return;
     const participants=selMembers.map(id=>({id,amount:parseInt(amounts[id])||0}));
     const changes=preview.map(p=>({memberId:p.id,delta:p.delta}));
-    const newM=members.map(m=>{
-      const c=changes.find(x=>x.memberId===m.id);
-      return c?{...m,balance:m.balance+c.delta}:m;
-    });
+    const newM=members.map(m=>{const c=changes.find(x=>x.memberId===m.id);return c?{...m,balance:m.balance+c.delta}:m;});
     const txn={id:uid(),date:new Date().toISOString(),type:'delivery',amount:total,memo,memberId:'',memberIds:[],amountPerPerson:0,fromMemberId:'',toMemberId:'',participants,payerId,sharedAmount:sharedNum};
     await onUpdate(newM,[txn,...transactions]);
     setSelMembers([]);setAmounts({});setSharedAmt('');setPayerId('lab');setMemo('');
     setDone(true);setTimeout(()=>setDone(false),2000);
   };
-
   return(
     <div>
       <div style={{marginBottom:18}}>
         <SectionLabel>참여 멤버</SectionLabel>
-        <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
-          {members.map(m=><Chip key={m.id} active={selMembers.includes(m.id)} onClick={()=>toggleM(m.id)}>{m.name}</Chip>)}
-        </div>
+        <div style={{display:'flex',flexWrap:'wrap',gap:8}}>{members.map(m=><Chip key={m.id} active={selMembers.includes(m.id)} onClick={()=>toggleM(m.id)}>{m.name}</Chip>)}</div>
       </div>
-
       {selMembers.length>0&&(
         <div style={{marginBottom:18}}>
           <SectionLabel>개인 금액</SectionLabel>
@@ -378,7 +346,6 @@ function DeliveryForm({members,transactions,onUpdate,saving}){
           </div>
         </div>
       )}
-
       <div style={{marginBottom:18}}>
         <SectionLabel>공동 금액 (배달팁, 공동메뉴 등 — 균등 분배)</SectionLabel>
         <div style={{position:'relative'}}>
@@ -387,23 +354,14 @@ function DeliveryForm({members,transactions,onUpdate,saving}){
         </div>
         {selMembers.length>0&&sharedNum>0&&<div style={{fontSize:12,color:'#999',marginTop:4}}>1인당 +{fmt(sharedPer)}원</div>}
       </div>
-
       <div style={{marginBottom:18}}>
         <SectionLabel>결제자</SectionLabel>
         <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
           <Chip active={payerId==='lab'} onClick={()=>setPayerId('lab')}>랩비카드</Chip>
-          {selMembers.map(id=>{
-            const m=members.find(x=>x.id===id);
-            return <Chip key={id} active={payerId===id} onClick={()=>setPayerId(id)}>{m?.name}</Chip>;
-          })}
+          {selMembers.map(id=>{const m=members.find(x=>x.id===id);return <Chip key={id} active={payerId===id} onClick={()=>setPayerId(id)}>{m?.name}</Chip>;})}
         </div>
       </div>
-
-      <div style={{marginBottom:18}}>
-        <SectionLabel>메모 (선택)</SectionLabel>
-        <input type="text" value={memo} onChange={e=>setMemo(e.target.value)} placeholder="치킨, 피자, 중국집 등..."/>
-      </div>
-
+      <div style={{marginBottom:18}}><SectionLabel>메모 (선택)</SectionLabel><input type="text" value={memo} onChange={e=>setMemo(e.target.value)} placeholder="치킨, 피자, 중국집 등..."/></div>
       {selMembers.length>0&&total>0&&(
         <div style={{marginBottom:18,padding:14,background:'#f8f8f6',borderRadius:12,border:'1px solid #eee'}}>
           <div style={{fontSize:12,color:'#999',marginBottom:10,fontWeight:600,letterSpacing:.4}}>정산 미리보기</div>
@@ -417,9 +375,7 @@ function DeliveryForm({members,transactions,onUpdate,saving}){
                   {p.isPayer&&payerId!=='lab'&&<span style={{fontSize:10,background:'#ede9fe',color:'#5b21b6',padding:'2px 7px',borderRadius:10,fontWeight:600}}>결제자</span>}
                 </div>
                 <div style={{textAlign:'right'}}>
-                  <span style={{fontSize:14,fontWeight:700,color:p.delta>=0?'#16a34a':'#dc2626'}}>
-                    {p.delta>=0?'+':''}{fmt(p.delta)}원
-                  </span>
+                  <span style={{fontSize:14,fontWeight:700,color:p.delta>=0?'#16a34a':'#dc2626'}}>{p.delta>=0?'+':''}{fmt(p.delta)}원</span>
                   {p.isPayer&&payerId!=='lab'&&<div style={{fontSize:10,color:'#999'}}>부담 {fmt(p.cost)}원</div>}
                 </div>
               </div>
@@ -431,7 +387,6 @@ function DeliveryForm({members,transactions,onUpdate,saving}){
           </div>
         </div>
       )}
-
       <SaveButton onClick={handleSubmit} disabled={selMembers.length===0||total===0} saving={saving} done={done}/>
     </div>
   );
@@ -439,10 +394,7 @@ function DeliveryForm({members,transactions,onUpdate,saving}){
 
 function TxnTab({members,transactions,onUpdate,saving}){
   const [type,setType]=useState('delivery');
-  const types=[
-    {id:'deposit',label:'입금'},{id:'withdraw',label:'출금'},
-    {id:'shared',label:'공동지출'},{id:'transfer',label:'송금'},{id:'delivery',label:'배달정산'},
-  ];
+  const types=[{id:'deposit',label:'입금'},{id:'withdraw',label:'출금'},{id:'shared',label:'공동지출'},{id:'transfer',label:'송금'},{id:'delivery',label:'배달정산'}];
   return(
     <div>
       <div style={{display:'flex',gap:8,marginBottom:24,flexWrap:'wrap'}}>
@@ -459,40 +411,22 @@ function TxnTab({members,transactions,onUpdate,saving}){
 function HistoryTab({members,transactions,onUpdate,saving}){
   const byId=members.reduce((a,m)=>({...a,[m.id]:m}),{});
   const [filter,setFilter]=useState('all');
-
   const getInfo=txn=>{
     if(txn.type==='deposit') return{label:(byId[txn.memberId]?.name||'?')+' 입금',icon:'+',bg:'#dcfce7',tc:'#16a34a',amt:'+'+fmt(txn.amount)+'원'};
     if(txn.type==='withdraw') return{label:(byId[txn.memberId]?.name||'?')+' 출금',icon:'−',bg:'#fee2e2',tc:'#dc2626',amt:'−'+fmt(txn.amount)+'원'};
-    if(txn.type==='transfer'){
-      const f=byId[txn.fromMemberId]?.name||'?';
-      const t=byId[txn.toMemberId]?.name||'?';
-      return{label:`${f} → ${t}`,icon:'↔',bg:'#ede9fe',tc:'#5b21b6',amt:fmt(txn.amount)+'원'};
-    }
-    if(txn.type==='shared'){
-      const names=(txn.memberIds||[]).map(id=>byId[id]?.name).filter(Boolean);
-      return{label:`공동지출 · ${names.join(', ')}`,icon:'÷',bg:'#dbeafe',tc:'#dc2626',amt:'−'+fmt(txn.amount)+'원'};
-    }
-    if(txn.type==='delivery'){
-      const names=(txn.participants||[]).map(p=>byId[p.id]?.name).filter(Boolean);
-      return{label:`배달정산 · ${names.join(', ')}`,icon:'🛵',bg:'#fef3c7',tc:'#92400e',amt:fmt(txn.amount)+'원'};
-    }
+    if(txn.type==='transfer'){const f=byId[txn.fromMemberId]?.name||'?';const t=byId[txn.toMemberId]?.name||'?';return{label:`${f} → ${t}`,icon:'↔',bg:'#ede9fe',tc:'#5b21b6',amt:fmt(txn.amount)+'원'};}
+    if(txn.type==='shared'){const names=(txn.memberIds||[]).map(id=>byId[id]?.name).filter(Boolean);return{label:`공동지출 · ${names.join(', ')}`,icon:'÷',bg:'#dbeafe',tc:'#dc2626',amt:'−'+fmt(txn.amount)+'원'};}
+    if(txn.type==='delivery'){const names=(txn.participants||[]).map(p=>byId[p.id]?.name).filter(Boolean);return{label:`배달정산 · ${names.join(', ')}`,icon:'🛵',bg:'#fef3c7',tc:'#92400e',amt:fmt(txn.amount)+'원'};}
     return{label:'기타',icon:'·',bg:'#f5f5f5',tc:'#555',amt:fmt(txn.amount)+'원'};
   };
-
   const handleDelete=async id=>{
-    const txn=transactions.find(t=>t.id===id);
-    if(!txn)return;
+    const txn=transactions.find(t=>t.id===id);if(!txn)return;
     const changes=computeChanges(txn);
-    const newM=members.map(m=>{
-      const c=changes.find(x=>x.memberId===m.id);
-      return c?{...m,balance:m.balance-c.delta}:m;
-    });
+    const newM=members.map(m=>{const c=changes.find(x=>x.memberId===m.id);return c?{...m,balance:m.balance-c.delta}:m;});
     await onUpdate(newM,transactions.filter(t=>t.id!==id));
   };
-
-  const filterMap={'deposit':'deposit','withdraw':'withdraw','transfer':'transfer','shared':'shared','delivery':'delivery'};
+  const filterMap={deposit:'deposit',withdraw:'withdraw',transfer:'transfer',shared:'shared',delivery:'delivery'};
   const filtered=filter==='all'?transactions:transactions.filter(t=>t.type===filterMap[filter]);
-
   return(
     <div>
       <div style={{display:'flex',gap:8,marginBottom:18,flexWrap:'wrap'}}>
@@ -586,10 +520,21 @@ function App(){
   const [status,setStatus]=useState('loading');
   const [errMsg,setErrMsg]=useState('');
 
+  const applyData=({members:m,transactions:t})=>{setMembers(m);setTxns(t);};
+
   const load=useCallback(async()=>{
-    setStatus('loading');
-    try{const d=await loadData();setMembers(d.members);setTxns(d.transactions);setStatus('ok');}
-    catch(e){setStatus('error');setErrMsg(e.message||'연결 실패');}
+    // 캐시가 있으면 즉시 표시
+    const cached=loadCache();
+    if(cached){applyData(cached);setStatus('ok');}
+    else{setStatus('loading');}
+    // 백그라운드에서 최신 데이터 갱신
+    try{
+      const fresh=await fetchFromSheet();
+      applyData(fresh);
+      setStatus('ok');
+    }catch(e){
+      if(!cached){setStatus('error');setErrMsg(e.message||'연결 실패');}
+    }
   },[]);
 
   useEffect(()=>{load();},[load]);
@@ -623,7 +568,7 @@ function App(){
           </button>
         ))}
       </div>
-      {status==='loading'?(
+      {status==='loading'&&!loadCache()?(
         <div style={{display:'flex',justifyContent:'center',alignItems:'center',gap:12,padding:'5rem 0',color:'#999',fontSize:14}}>
           <Spinner/> 구글 시트에서 불러오는 중...
         </div>
