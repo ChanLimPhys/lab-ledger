@@ -49,66 +49,67 @@ async function fetchFromSheet(){
 }
 
 function loadCache(){
-  try{
-    const c=localStorage.getItem(CACHE_KEY);
-    return c?JSON.parse(c):null;
-  }catch{return null;}
+  try{const c=localStorage.getItem(CACHE_KEY);return c?JSON.parse(c):null;}catch{return null;}
 }
 
 async function saveData(members,transactions){
   try{localStorage.setItem(CACHE_KEY,JSON.stringify({members,transactions}));}catch{}
-  await fetch(SCRIPT_URL,{
-    method:'POST',mode:'no-cors',
-    body:JSON.stringify({action:'saveAll',members,transactions})
-  });
+  await fetch(SCRIPT_URL,{method:'POST',mode:'no-cors',body:JSON.stringify({action:'saveAll',members,transactions})});
 }
 
 function computeChanges(txn){
   switch(txn.type){
     case 'deposit':  return [{memberId:txn.memberId,delta:Number(txn.amount)}];
     case 'withdraw': return [{memberId:txn.memberId,delta:-Number(txn.amount)}];
-    case 'transfer': return [
-      {memberId:txn.fromMemberId,delta:-Number(txn.amount)},
-      {memberId:txn.toMemberId,delta:+Number(txn.amount)},
-    ];
-    case 'shared':{
-      const ids=txn.memberIds||[];
-      const per=Number(txn.amount)/ids.length;
-      return ids.map(id=>({memberId:id,delta:-per}));
-    }
+    case 'transfer': return [{memberId:txn.fromMemberId,delta:-Number(txn.amount)},{memberId:txn.toMemberId,delta:+Number(txn.amount)}];
+    case 'shared':{const ids=txn.memberIds||[];const per=Number(txn.amount)/ids.length;return ids.map(id=>({memberId:id,delta:-per}));}
     case 'delivery':{
       const parts=txn.participants||[];
       const sharedPer=parts.length>0?Number(txn.sharedAmount)/parts.length:0;
       const total=Number(txn.amount);
       const pid=txn.payerId&&txn.payerId!=='lab'?txn.payerId:null;
-      return parts.map(p=>{
-        const cost=Number(p.amount)+sharedPer;
-        return{memberId:p.id,delta:-cost+(p.id===pid?total:0)};
-      });
+      return parts.map(p=>{const cost=Number(p.amount)+sharedPer;return{memberId:p.id,delta:-cost+(p.id===pid?total:0)};});
     }
     default:return[];
   }
 }
 
-function Spinner(){
-  return <span style={{display:'inline-block',width:15,height:15,border:'2px solid #ddd',borderTopColor:'#555',borderRadius:'50%',animation:'spin .6s linear infinite'}}/>
-}
+function Spinner(){return <span style={{display:'inline-block',width:15,height:15,border:'2px solid #ddd',borderTopColor:'#555',borderRadius:'50%',animation:'spin .6s linear infinite'}}/>}
+
 function Avatar({name,size=36}){
   const cols=[['#dbeafe','#1d4ed8'],['#dcfce7','#15803d'],['#fef3c7','#92400e'],['#fce7f3','#9d174d'],['#d1fae5','#065f46'],['#ede9fe','#5b21b6']];
   const [bg,fg]=cols[name.charCodeAt(0)%cols.length];
   return <div style={{width:size,height:size,borderRadius:'50%',background:bg,color:fg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:size*.38,fontWeight:600,flexShrink:0}}>{name.slice(0,1)}</div>;
 }
+
 function Chip({active,onClick,children,disabled}){
   return <button onClick={onClick} disabled={disabled} style={{padding:'7px 15px',border:active?'2px solid #111':'1px solid #ddd',borderRadius:20,background:active?'#111':disabled?'#f5f5f5':'#fff',color:active?'#fff':disabled?'#bbb':'#111',fontSize:13,fontWeight:active?500:400,transition:'all .15s'}}>{children}</button>;
 }
-function SectionLabel({children}){
-  return <div style={{fontSize:12,color:'#999',marginBottom:9,fontWeight:600,letterSpacing:.4}}>{children}</div>;
-}
+
+function SectionLabel({children}){return <div style={{fontSize:12,color:'#999',marginBottom:9,fontWeight:600,letterSpacing:.4}}>{children}</div>;}
+
 function SaveButton({onClick,disabled,saving,done}){
   return(
     <button onClick={onClick} disabled={disabled||saving} style={{width:'100%',padding:'14px',border:'none',borderRadius:12,background:done?'#dcfce7':disabled||saving?'#f0f0f0':'#111',color:done?'#16a34a':disabled||saving?'#999':'#fff',fontSize:16,fontWeight:600,display:'flex',alignItems:'center',justifyContent:'center',gap:8,transition:'all .2s'}}>
       {saving?<><Spinner/>&nbsp;저장 중...</>:done?'✓ 저장됨':'저장'}
     </button>
+  );
+}
+
+/* ── 삭제 확인 다이얼로그 ── */
+function ConfirmDialog({message,detail,onConfirm,onCancel}){
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:'0 24px'}}>
+      <div style={{background:'#fff',borderRadius:16,padding:'24px 20px',maxWidth:340,width:'100%',boxShadow:'0 8px 32px rgba(0,0,0,0.15)'}}>
+        <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>정말 삭제할까요?</div>
+        <div style={{fontSize:14,color:'#555',marginBottom:6}}>{message}</div>
+        {detail&&<div style={{fontSize:12,color:'#dc2626',background:'#fff5f5',borderRadius:8,padding:'8px 10px',marginBottom:16}}>⚠ {detail}</div>}
+        <div style={{display:'flex',gap:10,marginTop:16}}>
+          <button onClick={onCancel} style={{flex:1,padding:'11px',border:'1px solid #ddd',borderRadius:10,background:'#fff',fontSize:14,fontWeight:500,color:'#555'}}>취소</button>
+          <button onClick={onConfirm} style={{flex:1,padding:'11px',border:'none',borderRadius:10,background:'#dc2626',fontSize:14,fontWeight:600,color:'#fff'}}>삭제</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -130,8 +131,7 @@ function HomeTab({members}){
       <SectionLabel>개인별 잔액</SectionLabel>
       <div style={{display:'flex',flexDirection:'column',gap:10}}>
         {[...members].sort((a,b)=>a.balance-b.balance).map(m=>{
-          const diff=m.balance-BASELINE;
-          const low=diff<0;
+          const diff=m.balance-BASELINE;const low=diff<0;
           const pct=Math.min(100,Math.max(0,(m.balance/BASELINE)*100));
           return(
             <div key={m.id} style={{display:'flex',alignItems:'center',gap:12,padding:'13px 14px',borderRadius:12,border:'1px solid #eee',background:'#fff'}}>
@@ -169,10 +169,7 @@ function HomeTab({members}){
 }
 
 function DepositWithdrawForm({type,members,transactions,onUpdate,saving}){
-  const [selId,setSelId]=useState('');
-  const [amount,setAmount]=useState('');
-  const [memo,setMemo]=useState('');
-  const [done,setDone]=useState(false);
+  const [selId,setSelId]=useState('');const [amount,setAmount]=useState('');const [memo,setMemo]=useState('');const [done,setDone]=useState(false);
   const amtNum=parseInt(amount)||0;
   const handleSubmit=async()=>{
     if(!selId||amtNum<=0)return;
@@ -180,8 +177,7 @@ function DepositWithdrawForm({type,members,transactions,onUpdate,saving}){
     const newM=members.map(m=>m.id===selId?{...m,balance:m.balance+delta}:m);
     const txn={id:uid(),date:new Date().toISOString(),type,amount:amtNum,memo,memberId:selId,memberIds:[],amountPerPerson:0,fromMemberId:'',toMemberId:'',participants:[],payerId:'',sharedAmount:0};
     await onUpdate(newM,[txn,...transactions]);
-    setAmount('');setMemo('');setSelId('');
-    setDone(true);setTimeout(()=>setDone(false),2000);
+    setAmount('');setMemo('');setSelId('');setDone(true);setTimeout(()=>setDone(false),2000);
   };
   return(
     <div>
@@ -200,10 +196,7 @@ function DepositWithdrawForm({type,members,transactions,onUpdate,saving}){
 }
 
 function SharedForm({members,transactions,onUpdate,saving}){
-  const [selMembers,setSelMembers]=useState([]);
-  const [amount,setAmount]=useState('');
-  const [memo,setMemo]=useState('');
-  const [done,setDone]=useState(false);
+  const [selMembers,setSelMembers]=useState([]);const [amount,setAmount]=useState('');const [memo,setMemo]=useState('');const [done,setDone]=useState(false);
   const toggleM=id=>setSelMembers(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
   const allSel=selMembers.length===members.length;
   const amtNum=parseInt(amount)||0;
@@ -214,8 +207,7 @@ function SharedForm({members,transactions,onUpdate,saving}){
     const newM=members.map(m=>ids.includes(m.id)?{...m,balance:m.balance-per}:m);
     const txn={id:uid(),date:new Date().toISOString(),type:'shared',amount:amtNum,memo,memberId:'',memberIds:ids,amountPerPerson:per,fromMemberId:'',toMemberId:'',participants:[],payerId:'',sharedAmount:0};
     await onUpdate(newM,[txn,...transactions]);
-    setAmount('');setMemo('');setSelMembers([]);
-    setDone(true);setTimeout(()=>setDone(false),2000);
+    setAmount('');setMemo('');setSelMembers([]);setDone(true);setTimeout(()=>setDone(false),2000);
   };
   return(
     <div>
@@ -241,25 +233,16 @@ function SharedForm({members,transactions,onUpdate,saving}){
 }
 
 function TransferForm({members,transactions,onUpdate,saving}){
-  const [fromId,setFromId]=useState('');
-  const [toId,setToId]=useState('');
-  const [amount,setAmount]=useState('');
-  const [memo,setMemo]=useState('');
-  const [done,setDone]=useState(false);
+  const [fromId,setFromId]=useState('');const [toId,setToId]=useState('');const [amount,setAmount]=useState('');const [memo,setMemo]=useState('');const [done,setDone]=useState(false);
   const amtNum=parseInt(amount)||0;
   const fromName=members.find(m=>m.id===fromId)?.name;
   const toName=members.find(m=>m.id===toId)?.name;
   const handleSubmit=async()=>{
     if(!fromId||!toId||fromId===toId||amtNum<=0)return;
-    const newM=members.map(m=>{
-      if(m.id===fromId)return{...m,balance:m.balance-amtNum};
-      if(m.id===toId)return{...m,balance:m.balance+amtNum};
-      return m;
-    });
+    const newM=members.map(m=>{if(m.id===fromId)return{...m,balance:m.balance-amtNum};if(m.id===toId)return{...m,balance:m.balance+amtNum};return m;});
     const txn={id:uid(),date:new Date().toISOString(),type:'transfer',amount:amtNum,memo,memberId:'',memberIds:[],amountPerPerson:0,fromMemberId:fromId,toMemberId:toId,participants:[],payerId:'',sharedAmount:0};
     await onUpdate(newM,[txn,...transactions]);
-    setFromId('');setToId('');setAmount('');setMemo('');
-    setDone(true);setTimeout(()=>setDone(false),2000);
+    setFromId('');setToId('');setAmount('');setMemo('');setDone(true);setTimeout(()=>setDone(false),2000);
   };
   return(
     <div>
@@ -284,20 +267,10 @@ function TransferForm({members,transactions,onUpdate,saving}){
 }
 
 function DeliveryForm({members,transactions,onUpdate,saving}){
-  const [selMembers,setSelMembers]=useState([]);
-  const [amounts,setAmounts]=useState({});
-  const [sharedAmt,setSharedAmt]=useState('');
-  const [payerId,setPayerId]=useState('lab');
-  const [memo,setMemo]=useState('');
-  const [done,setDone]=useState(false);
+  const [selMembers,setSelMembers]=useState([]);const [amounts,setAmounts]=useState({});const [sharedAmt,setSharedAmt]=useState('');const [payerId,setPayerId]=useState('lab');const [memo,setMemo]=useState('');const [done,setDone]=useState(false);
   const toggleM=id=>{
     setSelMembers(p=>{
-      if(p.includes(id)){
-        const next=p.filter(x=>x!==id);
-        setAmounts(a=>{const n={...a};delete n[id];return n;});
-        if(payerId===id)setPayerId('lab');
-        return next;
-      }
+      if(p.includes(id)){const next=p.filter(x=>x!==id);setAmounts(a=>{const n={...a};delete n[id];return n;});if(payerId===id)setPayerId('lab');return next;}
       return[...p,id];
     });
   };
@@ -305,11 +278,7 @@ function DeliveryForm({members,transactions,onUpdate,saving}){
   const sharedPer=selMembers.length>0?sharedNum/selMembers.length:0;
   const indivTotal=selMembers.reduce((s,id)=>s+(parseInt(amounts[id])||0),0);
   const total=indivTotal+sharedNum;
-  const preview=selMembers.map(id=>{
-    const cost=(parseInt(amounts[id])||0)+sharedPer;
-    const isPayer=id===payerId;
-    return{id,cost,delta:-cost+(isPayer?total:0),isPayer};
-  });
+  const preview=selMembers.map(id=>{const cost=(parseInt(amounts[id])||0)+sharedPer;const isPayer=id===payerId;return{id,cost,delta:-cost+(isPayer?total:0),isPayer};});
   const handleSubmit=async()=>{
     if(selMembers.length===0||total===0)return;
     const participants=selMembers.map(id=>({id,amount:parseInt(amounts[id])||0}));
@@ -317,32 +286,25 @@ function DeliveryForm({members,transactions,onUpdate,saving}){
     const newM=members.map(m=>{const c=changes.find(x=>x.memberId===m.id);return c?{...m,balance:m.balance+c.delta}:m;});
     const txn={id:uid(),date:new Date().toISOString(),type:'delivery',amount:total,memo,memberId:'',memberIds:[],amountPerPerson:0,fromMemberId:'',toMemberId:'',participants,payerId,sharedAmount:sharedNum};
     await onUpdate(newM,[txn,...transactions]);
-    setSelMembers([]);setAmounts({});setSharedAmt('');setPayerId('lab');setMemo('');
-    setDone(true);setTimeout(()=>setDone(false),2000);
+    setSelMembers([]);setAmounts({});setSharedAmt('');setPayerId('lab');setMemo('');setDone(true);setTimeout(()=>setDone(false),2000);
   };
   return(
     <div>
-      <div style={{marginBottom:18}}>
-        <SectionLabel>참여 멤버</SectionLabel>
-        <div style={{display:'flex',flexWrap:'wrap',gap:8}}>{members.map(m=><Chip key={m.id} active={selMembers.includes(m.id)} onClick={()=>toggleM(m.id)}>{m.name}</Chip>)}</div>
-      </div>
+      <div style={{marginBottom:18}}><SectionLabel>참여 멤버</SectionLabel><div style={{display:'flex',flexWrap:'wrap',gap:8}}>{members.map(m=><Chip key={m.id} active={selMembers.includes(m.id)} onClick={()=>toggleM(m.id)}>{m.name}</Chip>)}</div></div>
       {selMembers.length>0&&(
         <div style={{marginBottom:18}}>
           <SectionLabel>개인 금액</SectionLabel>
           <div style={{display:'flex',flexDirection:'column',gap:8}}>
-            {selMembers.map(id=>{
-              const m=members.find(x=>x.id===id);
-              return(
-                <div key={id} style={{display:'flex',alignItems:'center',gap:10}}>
-                  <Avatar name={m.name} size={30}/>
-                  <span style={{fontSize:14,fontWeight:600,width:56,flexShrink:0}}>{m.name}</span>
-                  <div style={{flex:1,position:'relative'}}>
-                    <input type="number" value={amounts[id]||''} onChange={e=>setAmounts(p=>({...p,[id]:e.target.value}))} placeholder="0" min="0" style={{paddingRight:30}}/>
-                    <span style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',fontSize:12,color:'#999',pointerEvents:'none'}}>원</span>
-                  </div>
+            {selMembers.map(id=>{const m=members.find(x=>x.id===id);return(
+              <div key={id} style={{display:'flex',alignItems:'center',gap:10}}>
+                <Avatar name={m.name} size={30}/>
+                <span style={{fontSize:14,fontWeight:600,width:56,flexShrink:0}}>{m.name}</span>
+                <div style={{flex:1,position:'relative'}}>
+                  <input type="number" value={amounts[id]||''} onChange={e=>setAmounts(p=>({...p,[id]:e.target.value}))} placeholder="0" min="0" style={{paddingRight:30}}/>
+                  <span style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',fontSize:12,color:'#999',pointerEvents:'none'}}>원</span>
                 </div>
-              );
-            })}
+              </div>
+            );})}
           </div>
         </div>
       )}
@@ -365,23 +327,20 @@ function DeliveryForm({members,transactions,onUpdate,saving}){
       {selMembers.length>0&&total>0&&(
         <div style={{marginBottom:18,padding:14,background:'#f8f8f6',borderRadius:12,border:'1px solid #eee'}}>
           <div style={{fontSize:12,color:'#999',marginBottom:10,fontWeight:600,letterSpacing:.4}}>정산 미리보기</div>
-          {preview.map(p=>{
-            const m=members.find(x=>x.id===p.id);
-            return(
-              <div key={p.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <Avatar name={m.name} size={24}/>
-                  <span style={{fontSize:13,fontWeight:500}}>{m.name}</span>
-                  {p.isPayer&&payerId!=='lab'&&<span style={{fontSize:10,background:'#ede9fe',color:'#5b21b6',padding:'2px 7px',borderRadius:10,fontWeight:600}}>결제자</span>}
-                </div>
-                <div style={{textAlign:'right'}}>
-                  <span style={{fontSize:14,fontWeight:700,color:p.delta>=0?'#16a34a':'#dc2626'}}>{p.delta>=0?'+':''}{fmt(p.delta)}원</span>
-                  {p.isPayer&&payerId!=='lab'&&<div style={{fontSize:10,color:'#999'}}>부담 {fmt(p.cost)}원</div>}
-                </div>
+          {preview.map(p=>{const m=members.find(x=>x.id===p.id);return(
+            <div key={p.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <Avatar name={m.name} size={24}/>
+                <span style={{fontSize:13,fontWeight:500}}>{m.name}</span>
+                {p.isPayer&&payerId!=='lab'&&<span style={{fontSize:10,background:'#ede9fe',color:'#5b21b6',padding:'2px 7px',borderRadius:10,fontWeight:600}}>결제자</span>}
               </div>
-            );
-          })}
-          <div style={{borderTop:'1px solid #eee',marginTop:8,paddingTop:8,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div style={{textAlign:'right'}}>
+                <span style={{fontSize:14,fontWeight:700,color:p.delta>=0?'#16a34a':'#dc2626'}}>{p.delta>=0?'+':''}{fmt(p.delta)}원</span>
+                {p.isPayer&&payerId!=='lab'&&<div style={{fontSize:10,color:'#999'}}>부담 {fmt(p.cost)}원</div>}
+              </div>
+            </div>
+          );})}
+          <div style={{borderTop:'1px solid #eee',marginTop:8,paddingTop:8,display:'flex',justifyContent:'space-between'}}>
             <span style={{fontSize:12,color:'#999'}}>합계</span>
             <span style={{fontSize:14,fontWeight:700}}>{fmt(total)}원</span>
           </div>
@@ -408,9 +367,42 @@ function TxnTab({members,transactions,onUpdate,saving}){
   );
 }
 
+/* ── 배달정산 상세 패널 ── */
+function DeliveryDetail({txn,byId}){
+  const sharedPer=(txn.participants||[]).length>0?Number(txn.sharedAmount)/(txn.participants||[]).length:0;
+  const payerName=txn.payerId&&txn.payerId!=='lab'?byId[txn.payerId]?.name:'랩비카드';
+  return(
+    <div style={{marginTop:10,padding:'12px 14px',background:'#f8f8f6',borderRadius:10,border:'1px solid #eee'}}>
+      {(txn.participants||[]).map(p=>{
+        const m=byId[p.id];if(!m)return null;
+        const indiv=Number(p.amount);
+        const total=indiv+sharedPer;
+        const isPayer=p.id===txn.payerId;
+        return(
+          <div key={p.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+            <Avatar name={m.name} size={26}/>
+            <span style={{fontSize:13,fontWeight:600,flex:1}}>{m.name}{isPayer&&<span style={{marginLeft:6,fontSize:10,background:'#ede9fe',color:'#5b21b6',padding:'2px 6px',borderRadius:8,fontWeight:600}}>결제자</span>}</span>
+            <div style={{textAlign:'right'}}>
+              <div style={{fontSize:13,fontWeight:600}}>{fmt(indiv)}원</div>
+              {sharedPer>0&&<div style={{fontSize:11,color:'#999'}}>+공동 {fmt(sharedPer)}원 = {fmt(total)}원</div>}
+            </div>
+          </div>
+        );
+      })}
+      <div style={{borderTop:'1px solid #e5e5e5',marginTop:6,paddingTop:8,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span style={{fontSize:11,color:'#999'}}>결제: {payerName} · 공동금액: {fmt(txn.sharedAmount||0)}원</span>
+        <span style={{fontSize:13,fontWeight:700}}>합계 {fmt(txn.amount)}원</span>
+      </div>
+    </div>
+  );
+}
+
 function HistoryTab({members,transactions,onUpdate,saving}){
   const byId=members.reduce((a,m)=>({...a,[m.id]:m}),{});
   const [filter,setFilter]=useState('all');
+  const [expandedId,setExpandedId]=useState(null);
+  const [confirmId,setConfirmId]=useState(null);
+
   const getInfo=txn=>{
     if(txn.type==='deposit') return{label:(byId[txn.memberId]?.name||'?')+' 입금',icon:'+',bg:'#dcfce7',tc:'#16a34a',amt:'+'+fmt(txn.amount)+'원'};
     if(txn.type==='withdraw') return{label:(byId[txn.memberId]?.name||'?')+' 출금',icon:'−',bg:'#fee2e2',tc:'#dc2626',amt:'−'+fmt(txn.amount)+'원'};
@@ -419,16 +411,31 @@ function HistoryTab({members,transactions,onUpdate,saving}){
     if(txn.type==='delivery'){const names=(txn.participants||[]).map(p=>byId[p.id]?.name).filter(Boolean);return{label:`배달정산 · ${names.join(', ')}`,icon:'🛵',bg:'#fef3c7',tc:'#92400e',amt:fmt(txn.amount)+'원'};}
     return{label:'기타',icon:'·',bg:'#f5f5f5',tc:'#555',amt:fmt(txn.amount)+'원'};
   };
-  const handleDelete=async id=>{
-    const txn=transactions.find(t=>t.id===id);if(!txn)return;
+
+  const handleDeleteConfirmed=async()=>{
+    const txn=transactions.find(t=>t.id===confirmId);
+    setConfirmId(null);
+    if(!txn)return;
     const changes=computeChanges(txn);
     const newM=members.map(m=>{const c=changes.find(x=>x.memberId===m.id);return c?{...m,balance:m.balance-c.delta}:m;});
-    await onUpdate(newM,transactions.filter(t=>t.id!==id));
+    await onUpdate(newM,transactions.filter(t=>t.id!==txn.id));
   };
-  const filterMap={deposit:'deposit',withdraw:'withdraw',transfer:'transfer',shared:'shared',delivery:'delivery'};
-  const filtered=filter==='all'?transactions:transactions.filter(t=>t.type===filterMap[filter]);
+
+  const filtered=filter==='all'?transactions:transactions.filter(t=>t.type===filter);
+
+  const confirmTxn=transactions.find(t=>t.id===confirmId);
+  const confirmInfo=confirmTxn?getInfo(confirmTxn):null;
+
   return(
     <div>
+      {confirmId&&(
+        <ConfirmDialog
+          message={confirmInfo?.label+(confirmTxn?.memo?' ('+confirmTxn.memo+')':'')+' · '+confirmInfo?.amt}
+          detail="삭제하면 잔액이 복구되지만 거래 기록은 영구적으로 사라져요."
+          onConfirm={handleDeleteConfirmed}
+          onCancel={()=>setConfirmId(null)}
+        />
+      )}
       <div style={{display:'flex',gap:8,marginBottom:18,flexWrap:'wrap'}}>
         {[['all','전체'],['deposit','입금'],['withdraw','출금'],['transfer','송금'],['shared','공동'],['delivery','배달']].map(([v,l])=>(
           <Chip key={v} active={filter===v} onClick={()=>setFilter(v)}>{l}</Chip>
@@ -441,19 +448,33 @@ function HistoryTab({members,transactions,onUpdate,saving}){
           {filtered.map(txn=>{
             const{label,icon,bg,tc,amt}=getInfo(txn);
             const date=new Date(txn.date).toLocaleDateString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+            const isDelivery=txn.type==='delivery';
+            const expanded=expandedId===txn.id;
             return(
-              <div key={txn.id} style={{display:'flex',alignItems:'center',gap:12,padding:'12px 14px',borderRadius:12,border:'1px solid #eee',background:'#fff'}}>
-                <div style={{width:36,height:36,borderRadius:10,background:bg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0,color:tc,fontWeight:700}}>{icon}</div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:14,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{txn.memo||label}</div>
-                  <div style={{fontSize:11,color:'#999',marginTop:2}}>{txn.memo?label+' · ':''}{date}</div>
+              <div key={txn.id} style={{borderRadius:12,border:'1px solid #eee',background:'#fff',overflow:'hidden'}}>
+                <div style={{display:'flex',alignItems:'center',gap:12,padding:'12px 14px'}}>
+                  <div style={{width:36,height:36,borderRadius:10,background:bg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0,color:tc,fontWeight:700}}>{icon}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:14,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{txn.memo||label}</div>
+                    <div style={{fontSize:11,color:'#999',marginTop:2}}>{txn.memo?label+' · ':''}{date}</div>
+                  </div>
+                  <div style={{textAlign:'right',flexShrink:0,marginRight:4}}>
+                    <div style={{fontSize:14,fontWeight:700,color:tc}}>{amt}</div>
+                    {txn.type==='shared'&&(txn.memberIds||[]).length>1&&<div style={{fontSize:11,color:'#999'}}>{fmt(txn.amountPerPerson)}원/인</div>}
+                    {isDelivery&&<div style={{fontSize:11,color:'#999'}}>{(txn.participants||[]).length}명</div>}
+                  </div>
+                  {isDelivery&&(
+                    <button onClick={()=>setExpandedId(expanded?null:txn.id)} style={{background:'transparent',border:'1px solid #eee',borderRadius:8,color:'#666',fontSize:12,padding:'4px 8px',flexShrink:0,fontWeight:500}}>
+                      {expanded?'접기':'자세히'}
+                    </button>
+                  )}
+                  <button onClick={()=>setConfirmId(txn.id)} disabled={saving} style={{background:'transparent',border:'none',color:'#ccc',fontSize:20,padding:'2px 4px',lineHeight:1,flexShrink:0}}>×</button>
                 </div>
-                <div style={{textAlign:'right',flexShrink:0,marginRight:6}}>
-                  <div style={{fontSize:14,fontWeight:700,color:tc}}>{amt}</div>
-                  {txn.type==='shared'&&(txn.memberIds||[]).length>1&&<div style={{fontSize:11,color:'#999'}}>{fmt(txn.amountPerPerson)}원/인</div>}
-                  {txn.type==='delivery'&&<div style={{fontSize:11,color:'#999'}}>{(txn.participants||[]).length}명</div>}
-                </div>
-                <button onClick={()=>handleDelete(txn.id)} disabled={saving} style={{background:'transparent',border:'none',color:'#ccc',fontSize:20,padding:'2px 4px',lineHeight:1,flexShrink:0}}>×</button>
+                {isDelivery&&expanded&&(
+                  <div style={{padding:'0 14px 14px'}}>
+                    <DeliveryDetail txn={txn} byId={byId}/>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -464,22 +485,22 @@ function HistoryTab({members,transactions,onUpdate,saving}){
 }
 
 function MembersTab({members,transactions,onUpdate,saving}){
-  const [name,setName]=useState('');
-  const [bal,setBal]=useState('50000');
-  const [editId,setEditId]=useState(null);
-  const [editBal,setEditBal]=useState('');
-  const add=async()=>{
-    if(!name.trim())return;
-    await onUpdate([...members,{id:uid(),name:name.trim(),balance:parseInt(bal)||0}],transactions);
-    setName('');setBal('50000');
-  };
-  const remove=async id=>await onUpdate(members.filter(m=>m.id!==id),transactions);
-  const saveEdit=async id=>{
-    await onUpdate(members.map(m=>m.id===id?{...m,balance:parseInt(editBal)||0}:m),transactions);
-    setEditId(null);
-  };
+  const [name,setName]=useState('');const [bal,setBal]=useState('50000');const [editId,setEditId]=useState(null);const [editBal,setEditBal]=useState('');
+  const [confirmId,setConfirmId]=useState(null);
+  const add=async()=>{if(!name.trim())return;await onUpdate([...members,{id:uid(),name:name.trim(),balance:parseInt(bal)||0}],transactions);setName('');setBal('50000');};
+  const remove=async id=>{await onUpdate(members.filter(m=>m.id!==id),transactions);setConfirmId(null);};
+  const saveEdit=async id=>{await onUpdate(members.map(m=>m.id===id?{...m,balance:parseInt(editBal)||0}:m),transactions);setEditId(null);};
+  const confirmMember=members.find(m=>m.id===confirmId);
   return(
     <div>
+      {confirmId&&(
+        <ConfirmDialog
+          message={`${confirmMember?.name} 멤버를 삭제할까요?`}
+          detail="멤버 삭제는 되돌릴 수 없어요. 기존 거래 내역의 이름 표시에 영향을 줄 수 있어요."
+          onConfirm={()=>remove(confirmId)}
+          onCancel={()=>setConfirmId(null)}
+        />
+      )}
       <div style={{marginBottom:22,padding:16,border:'1px solid #eee',borderRadius:12,background:'#fff'}}>
         <SectionLabel>멤버 추가</SectionLabel>
         <input type="text" value={name} onChange={e=>setName(e.target.value)} placeholder="이름" style={{marginBottom:10}} onKeyDown={e=>e.key==='Enter'&&add()}/>
@@ -505,7 +526,7 @@ function MembersTab({members,transactions,onUpdate,saving}){
                 <div style={{fontSize:13,color:'#999',marginTop:2,cursor:'pointer'}} onClick={()=>{setEditId(m.id);setEditBal(String(m.balance));}}>{fmt(m.balance)}원 <span style={{fontSize:11}}>✎</span></div>
               )}
             </div>
-            <button onClick={()=>remove(m.id)} disabled={saving} style={{padding:'5px 12px',border:'1px solid #fee2e2',borderRadius:8,background:'#fff',color:'#dc2626',fontSize:12,fontWeight:500}}>삭제</button>
+            <button onClick={()=>setConfirmId(m.id)} disabled={saving} style={{padding:'5px 12px',border:'1px solid #fee2e2',borderRadius:8,background:'#fff',color:'#dc2626',fontSize:12,fontWeight:500}}>삭제</button>
           </div>
         ))}
       </div>
@@ -523,18 +544,11 @@ function App(){
   const applyData=({members:m,transactions:t})=>{setMembers(m);setTxns(t);};
 
   const load=useCallback(async()=>{
-    // 캐시가 있으면 즉시 표시
     const cached=loadCache();
     if(cached){applyData(cached);setStatus('ok');}
     else{setStatus('loading');}
-    // 백그라운드에서 최신 데이터 갱신
-    try{
-      const fresh=await fetchFromSheet();
-      applyData(fresh);
-      setStatus('ok');
-    }catch(e){
-      if(!cached){setStatus('error');setErrMsg(e.message||'연결 실패');}
-    }
+    try{const fresh=await fetchFromSheet();applyData(fresh);setStatus('ok');}
+    catch(e){if(!cached){setStatus('error');setErrMsg(e.message||'연결 실패');}}
   },[]);
 
   useEffect(()=>{load();},[load]);
