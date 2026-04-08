@@ -14,6 +14,7 @@ input{width:100%;padding:10px 13px;border:1px solid #ddd;border-radius:8px;font-
 input:focus{border-color:#888}
 button{font-family:inherit;cursor:pointer}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes slideDown{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
 </style>
 </head>
 <body>
@@ -35,7 +36,6 @@ function parseSheet(data){
     amountPerPerson:Number(t.amountPerPerson)||0,
     sharedAmount:Number(t.sharedAmount)||0,
     memberIds:t.memberIds?String(t.memberIds).split(',').filter(Boolean):[],
-    // participants는 서버에서 이미 조립돼서 내려옴 — JSON 파싱 불필요
     participants:(t.participants||[]).map(p=>({id:String(p.id),amount:Number(p.amount)})),
   }));
   return{members,transactions};
@@ -75,6 +75,33 @@ function computeChanges(txn){
   }
 }
 
+// 멤버별 거래 이력 계산 (현재잔액에서 역산)
+function getMemberHistory(memberId, transactions, currentBalance){
+  const relevant = [];
+  [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(txn=>{
+    const changes = computeChanges(txn);
+    const c = changes.find(x=>x.memberId===memberId);
+    if(c) relevant.push({txn, delta:c.delta});
+  });
+  // 현재잔액에서 역산으로 누적잔액 계산
+  let bal = currentBalance;
+  const result = [];
+  for(let i=relevant.length-1;i>=0;i--){
+    result.unshift({...relevant[i], balanceAfter:bal});
+    bal -= relevant[i].delta;
+  }
+  return result;
+}
+
+function txnTypeLabel(txn, memberId){
+  if(txn.type==='deposit') return '입금';
+  if(txn.type==='withdraw') return '출금';
+  if(txn.type==='transfer') return txn.fromMemberId===memberId?'송금(출)':'송금(입)';
+  if(txn.type==='shared') return '공동지출';
+  if(txn.type==='delivery') return '배달정산';
+  return '기타';
+}
+
 function Spinner(){return <span style={{display:'inline-block',width:15,height:15,border:'2px solid #ddd',borderTopColor:'#555',borderRadius:'50%',animation:'spin .6s linear infinite'}}/>}
 
 function Avatar({name,size=36}){
@@ -106,6 +133,70 @@ function ConfirmDialog({message,detail,onConfirm,onCancel}){
           <button onClick={onCancel} style={{flex:1,padding:'11px',border:'1px solid #ddd',borderRadius:10,background:'#fff',fontSize:14,fontWeight:500,color:'#555'}}>취소</button>
           <button onClick={onConfirm} style={{flex:1,padding:'11px',border:'none',borderRadius:10,background:'#dc2626',fontSize:14,fontWeight:600,color:'#fff'}}>삭제</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function MemberHistoryPanel({member, transactions}){
+  const history = getMemberHistory(member.id, transactions, member.balance);
+  if(history.length===0){
+    return <div style={{padding:'16px 0 8px',textAlign:'center',color:'#bbb',fontSize:13}}>거래 내역이 없습니다</div>;
+  }
+  return(
+    <div style={{animation:'slideDown .2s ease',marginTop:12}}>
+      {/* 누적 잔액 미니 차트 */}
+      {history.length>=2&&(()=>{
+        const vals=history.map(h=>h.balanceAfter);
+        const min=Math.min(...vals,0);
+        const max=Math.max(...vals, BASELINE);
+        const range=max-min||1;
+        const W=100, H=40;
+        const pts=vals.map((v,i)=>`${(i/(vals.length-1))*W},${H-((v-min)/range)*H}`).join(' ');
+        const baseY=H-((0-min)/range)*H;
+        const baselineY=H-((BASELINE-min)/range)*H;
+        return(
+          <div style={{marginBottom:12,padding:'10px 12px',background:'#f8f8f6',borderRadius:10,border:'1px solid #eee'}}>
+            <div style={{fontSize:11,color:'#999',marginBottom:6,fontWeight:600}}>잔액 추이</div>
+            <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:48,display:'block'}}>
+              <line x1="0" y1={baselineY} x2={W} y2={baselineY} stroke="#fca5a5" strokeWidth="0.8" strokeDasharray="2,2"/>
+              <polyline points={pts} fill="none" stroke="#6366f1" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"/>
+              {vals.map((v,i)=>(
+                <circle key={i} cx={(i/(vals.length-1))*W} cy={H-((v-min)/range)*H} r="2" fill="#6366f1"/>
+              ))}
+            </svg>
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'#bbb',marginTop:2}}>
+              <span>{new Date(history[0].txn.date).toLocaleDateString('ko-KR',{month:'short',day:'numeric'})}</span>
+              <span style={{color:'#fca5a5',fontSize:10}}>기준 {fmt(BASELINE)}원</span>
+              <span>{new Date(history[history.length-1].txn.date).toLocaleDateString('ko-KR',{month:'short',day:'numeric'})}</span>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 이력 목록 (최신순) */}
+      <div style={{display:'flex',flexDirection:'column',gap:6}}>
+        {[...history].reverse().map(({txn,delta,balanceAfter},i)=>{
+          const isPos=delta>=0;
+          const date=new Date(txn.date).toLocaleDateString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+          const typeLabel=txnTypeLabel(txn,member.id);
+          return(
+            <div key={txn.id+i} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',borderRadius:10,background:'#fff',border:'1px solid #f0f0f0'}}>
+              <div style={{width:6,height:6,borderRadius:'50%',background:isPos?'#86efac':'#fca5a5',flexShrink:0}}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:'flex',alignItems:'baseline',gap:6}}>
+                  <span style={{fontSize:12,color:'#999',flexShrink:0}}>{date}</span>
+                  <span style={{fontSize:12,background:'#f5f5f5',color:'#666',padding:'1px 7px',borderRadius:6,flexShrink:0}}>{typeLabel}</span>
+                  {txn.memo&&<span style={{fontSize:12,color:'#aaa',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{txn.memo}</span>}
+                </div>
+              </div>
+              <div style={{textAlign:'right',flexShrink:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:isPos?'#16a34a':'#dc2626'}}>{isPos?'+':''}{fmt(delta)}원</div>
+                <div style={{fontSize:11,color:'#bbb'}}>{fmt(balanceAfter)}원</div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -372,16 +463,11 @@ function DeliveryDetail({txn,byId}){
     <div style={{marginTop:10,padding:'12px 14px',background:'#f8f8f6',borderRadius:10,border:'1px solid #eee'}}>
       {(txn.participants||[]).map(p=>{
         const m=byId[p.id];if(!m)return null;
-        const indiv=Number(p.amount);
-        const total=indiv+sharedPer;
-        const isPayer=p.id===txn.payerId;
+        const indiv=Number(p.amount);const total=indiv+sharedPer;const isPayer=p.id===txn.payerId;
         return(
           <div key={p.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
             <Avatar name={m.name} size={26}/>
-            <span style={{fontSize:13,fontWeight:600,flex:1}}>
-              {m.name}
-              {isPayer&&<span style={{marginLeft:6,fontSize:10,background:'#ede9fe',color:'#5b21b6',padding:'2px 6px',borderRadius:8,fontWeight:600}}>결제자</span>}
-            </span>
+            <span style={{fontSize:13,fontWeight:600,flex:1}}>{m.name}{isPayer&&<span style={{marginLeft:6,fontSize:10,background:'#ede9fe',color:'#5b21b6',padding:'2px 6px',borderRadius:8,fontWeight:600}}>결제자</span>}</span>
             <div style={{textAlign:'right'}}>
               <div style={{fontSize:13,fontWeight:600}}>{fmt(indiv)}원</div>
               {sharedPer>0&&<div style={{fontSize:11,color:'#999'}}>+공동 {fmt(sharedPer)}원 = {fmt(total)}원</div>}
@@ -402,7 +488,6 @@ function HistoryTab({members,transactions,onUpdate,saving}){
   const [filter,setFilter]=useState('all');
   const [expandedId,setExpandedId]=useState(null);
   const [confirmId,setConfirmId]=useState(null);
-
   const getInfo=txn=>{
     if(txn.type==='deposit') return{label:(byId[txn.memberId]?.name||'?')+' 입금',icon:'+',bg:'#dcfce7',tc:'#16a34a',amt:'+'+fmt(txn.amount)+'원'};
     if(txn.type==='withdraw') return{label:(byId[txn.memberId]?.name||'?')+' 출금',icon:'−',bg:'#fee2e2',tc:'#dc2626',amt:'−'+fmt(txn.amount)+'원'};
@@ -411,30 +496,18 @@ function HistoryTab({members,transactions,onUpdate,saving}){
     if(txn.type==='delivery'){const names=(txn.participants||[]).map(p=>byId[p.id]?.name).filter(Boolean);return{label:`배달정산 · ${names.join(', ')}`,icon:'🛵',bg:'#fef3c7',tc:'#92400e',amt:fmt(txn.amount)+'원'};}
     return{label:'기타',icon:'·',bg:'#f5f5f5',tc:'#555',amt:fmt(txn.amount)+'원'};
   };
-
   const handleDeleteConfirmed=async()=>{
-    const txn=transactions.find(t=>t.id===confirmId);
-    setConfirmId(null);
-    if(!txn)return;
+    const txn=transactions.find(t=>t.id===confirmId);setConfirmId(null);if(!txn)return;
     const changes=computeChanges(txn);
     const newM=members.map(m=>{const c=changes.find(x=>x.memberId===m.id);return c?{...m,balance:m.balance-c.delta}:m;});
     await onUpdate(newM,transactions.filter(t=>t.id!==txn.id));
   };
-
   const filtered=filter==='all'?transactions:transactions.filter(t=>t.type===filter);
   const confirmTxn=transactions.find(t=>t.id===confirmId);
   const confirmInfo=confirmTxn?getInfo(confirmTxn):null;
-
   return(
     <div>
-      {confirmId&&(
-        <ConfirmDialog
-          message={(confirmInfo?.label)+(confirmTxn?.memo?' ('+confirmTxn.memo+')':'')+' · '+confirmInfo?.amt}
-          detail="삭제하면 잔액이 복구되지만 거래 기록은 영구적으로 사라져요."
-          onConfirm={handleDeleteConfirmed}
-          onCancel={()=>setConfirmId(null)}
-        />
-      )}
+      {confirmId&&<ConfirmDialog message={(confirmInfo?.label)+(confirmTxn?.memo?' ('+confirmTxn.memo+')':'')+' · '+confirmInfo?.amt} detail="삭제하면 잔액이 복구되지만 거래 기록은 영구적으로 사라져요." onConfirm={handleDeleteConfirmed} onCancel={()=>setConfirmId(null)}/>}
       <div style={{display:'flex',gap:8,marginBottom:18,flexWrap:'wrap'}}>
         {[['all','전체'],['deposit','입금'],['withdraw','출금'],['transfer','송금'],['shared','공동'],['delivery','배달']].map(([v,l])=>(
           <Chip key={v} active={filter===v} onClick={()=>setFilter(v)}>{l}</Chip>
@@ -447,8 +520,7 @@ function HistoryTab({members,transactions,onUpdate,saving}){
           {filtered.map(txn=>{
             const{label,icon,bg,tc,amt}=getInfo(txn);
             const date=new Date(txn.date).toLocaleDateString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-            const isDelivery=txn.type==='delivery';
-            const expanded=expandedId===txn.id;
+            const isDelivery=txn.type==='delivery';const expanded=expandedId===txn.id;
             return(
               <div key={txn.id} style={{borderRadius:12,border:'1px solid #eee',background:'#fff',overflow:'hidden'}}>
                 <div style={{display:'flex',alignItems:'center',gap:12,padding:'12px 14px'}}>
@@ -462,18 +534,10 @@ function HistoryTab({members,transactions,onUpdate,saving}){
                     {txn.type==='shared'&&(txn.memberIds||[]).length>1&&<div style={{fontSize:11,color:'#999'}}>{fmt(txn.amountPerPerson)}원/인</div>}
                     {isDelivery&&<div style={{fontSize:11,color:'#999'}}>{(txn.participants||[]).length}명</div>}
                   </div>
-                  {isDelivery&&(
-                    <button onClick={()=>setExpandedId(expanded?null:txn.id)} style={{background:'transparent',border:'1px solid #eee',borderRadius:8,color:'#666',fontSize:12,padding:'4px 8px',flexShrink:0,fontWeight:500,whiteSpace:'nowrap'}}>
-                      {expanded?'접기':'자세히'}
-                    </button>
-                  )}
+                  {isDelivery&&<button onClick={()=>setExpandedId(expanded?null:txn.id)} style={{background:'transparent',border:'1px solid #eee',borderRadius:8,color:'#666',fontSize:12,padding:'4px 8px',flexShrink:0,fontWeight:500,whiteSpace:'nowrap'}}>{expanded?'접기':'자세히'}</button>}
                   <button onClick={()=>setConfirmId(txn.id)} disabled={saving} style={{background:'transparent',border:'none',color:'#ccc',fontSize:20,padding:'2px 4px',lineHeight:1,flexShrink:0}}>×</button>
                 </div>
-                {isDelivery&&expanded&&(
-                  <div style={{padding:'0 14px 14px'}}>
-                    <DeliveryDetail txn={txn} byId={byId}/>
-                  </div>
-                )}
+                {isDelivery&&expanded&&<div style={{padding:'0 14px 14px'}}><DeliveryDetail txn={txn} byId={byId}/></div>}
               </div>
             );
           })}
@@ -486,20 +550,16 @@ function HistoryTab({members,transactions,onUpdate,saving}){
 function MembersTab({members,transactions,onUpdate,saving}){
   const [name,setName]=useState('');const [bal,setBal]=useState('50000');const [editId,setEditId]=useState(null);const [editBal,setEditBal]=useState('');
   const [confirmId,setConfirmId]=useState(null);
+  const [expandedId,setExpandedId]=useState(null);
+
   const add=async()=>{if(!name.trim())return;await onUpdate([...members,{id:uid(),name:name.trim(),balance:parseInt(bal)||0}],transactions);setName('');setBal('50000');};
   const remove=async id=>{await onUpdate(members.filter(m=>m.id!==id),transactions);setConfirmId(null);};
   const saveEdit=async id=>{await onUpdate(members.map(m=>m.id===id?{...m,balance:parseInt(editBal)||0}:m),transactions);setEditId(null);};
   const confirmMember=members.find(m=>m.id===confirmId);
+
   return(
     <div>
-      {confirmId&&(
-        <ConfirmDialog
-          message={`${confirmMember?.name} 멤버를 삭제할까요?`}
-          detail="멤버 삭제는 되돌릴 수 없어요. 기존 거래 내역의 이름 표시에 영향을 줄 수 있어요."
-          onConfirm={()=>remove(confirmId)}
-          onCancel={()=>setConfirmId(null)}
-        />
-      )}
+      {confirmId&&<ConfirmDialog message={`${confirmMember?.name} 멤버를 삭제할까요?`} detail="멤버 삭제는 되돌릴 수 없어요. 기존 거래 내역의 이름 표시에 영향을 줄 수 있어요." onConfirm={()=>remove(confirmId)} onCancel={()=>setConfirmId(null)}/>}
       <div style={{marginBottom:22,padding:16,border:'1px solid #eee',borderRadius:12,background:'#fff'}}>
         <SectionLabel>멤버 추가</SectionLabel>
         <input type="text" value={name} onChange={e=>setName(e.target.value)} placeholder="이름" style={{marginBottom:10}} onKeyDown={e=>e.key==='Enter'&&add()}/>
@@ -508,26 +568,42 @@ function MembersTab({members,transactions,onUpdate,saving}){
           {saving?<><Spinner/>&nbsp;저장 중...</>:'추가'}
         </button>
       </div>
-      <SectionLabel>멤버 목록 ({members.length}명)</SectionLabel>
+      <SectionLabel>멤버 목록 ({members.length}명) · 카드를 눌러 이력 확인</SectionLabel>
       <div style={{display:'flex',flexDirection:'column',gap:10}}>
-        {members.map(m=>(
-          <div key={m.id} style={{display:'flex',alignItems:'center',gap:12,padding:'13px 14px',borderRadius:12,border:'1px solid #eee',background:'#fff'}}>
-            <Avatar name={m.name}/>
-            <div style={{flex:1}}>
-              <div style={{fontWeight:600,fontSize:14}}>{m.name}</div>
-              {editId===m.id?(
-                <div style={{display:'flex',gap:6,marginTop:6}}>
-                  <input type="number" value={editBal} onChange={e=>setEditBal(e.target.value)} style={{fontSize:13,padding:'5px 9px',width:120}}/>
-                  <button onClick={()=>saveEdit(m.id)} style={{padding:'5px 11px',border:'1px solid #ddd',borderRadius:7,background:'#fff',fontSize:12,fontWeight:500}}>저장</button>
-                  <button onClick={()=>setEditId(null)} style={{padding:'5px 8px',border:'none',background:'transparent',fontSize:12,color:'#999'}}>취소</button>
+        {members.map(m=>{
+          const expanded=expandedId===m.id;
+          return(
+            <div key={m.id} style={{borderRadius:12,border:'1px solid #eee',background:'#fff',overflow:'hidden'}}>
+              {/* 멤버 카드 헤더 — 클릭하면 이력 토글 */}
+              <div style={{display:'flex',alignItems:'center',gap:12,padding:'13px 14px',cursor:'pointer'}} onClick={()=>setExpandedId(expanded?null:m.id)}>
+                <Avatar name={m.name}/>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:600,fontSize:14}}>{m.name}</div>
+                  {editId===m.id?(
+                    <div style={{display:'flex',gap:6,marginTop:6}} onClick={e=>e.stopPropagation()}>
+                      <input type="number" value={editBal} onChange={e=>setEditBal(e.target.value)} style={{fontSize:13,padding:'5px 9px',width:120}}/>
+                      <button onClick={()=>saveEdit(m.id)} style={{padding:'5px 11px',border:'1px solid #ddd',borderRadius:7,background:'#fff',fontSize:12,fontWeight:500}}>저장</button>
+                      <button onClick={()=>setEditId(null)} style={{padding:'5px 8px',border:'none',background:'transparent',fontSize:12,color:'#999'}}>취소</button>
+                    </div>
+                  ):(
+                    <div style={{fontSize:13,color:'#999',marginTop:2}}>{fmt(m.balance)}원</div>
+                  )}
                 </div>
-              ):(
-                <div style={{fontSize:13,color:'#999',marginTop:2,cursor:'pointer'}} onClick={()=>{setEditId(m.id);setEditBal(String(m.balance));}}>{fmt(m.balance)}원 <span style={{fontSize:11}}>✎</span></div>
+                <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
+                  <button onClick={e=>{e.stopPropagation();setEditId(editId===m.id?null:m.id);setEditBal(String(m.balance));}} style={{padding:'4px 9px',border:'1px solid #eee',borderRadius:7,background:'#fff',fontSize:12,color:'#888'}}>수정</button>
+                  <button onClick={e=>{e.stopPropagation();setConfirmId(m.id);}} disabled={saving} style={{padding:'4px 9px',border:'1px solid #fee2e2',borderRadius:7,background:'#fff',color:'#dc2626',fontSize:12}}>삭제</button>
+                  <span style={{fontSize:12,color:'#bbb',marginLeft:2}}>{expanded?'▲':'▼'}</span>
+                </div>
+              </div>
+              {/* 이력 패널 */}
+              {expanded&&(
+                <div style={{borderTop:'1px solid #f5f5f5',padding:'0 14px 14px'}}>
+                  <MemberHistoryPanel member={m} transactions={transactions}/>
+                </div>
               )}
             </div>
-            <button onClick={()=>setConfirmId(m.id)} disabled={saving} style={{padding:'5px 12px',border:'1px solid #fee2e2',borderRadius:8,background:'#fff',color:'#dc2626',fontSize:12,fontWeight:500}}>삭제</button>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -539,52 +615,38 @@ function App(){
   const [tab,setTab]=useState('home');
   const [status,setStatus]=useState('loading');
   const [errMsg,setErrMsg]=useState('');
-
   const applyData=({members:m,transactions:t})=>{setMembers(m);setTxns(t);};
-
   const load=useCallback(async()=>{
     const cached=loadCache();
-    if(cached){applyData(cached);setStatus('ok');}
-    else{setStatus('loading');}
+    if(cached){applyData(cached);setStatus('ok');}else{setStatus('loading');}
     try{const fresh=await fetchFromSheet();applyData(fresh);setStatus('ok');}
     catch(e){if(!cached){setStatus('error');setErrMsg(e.message||'연결 실패');}}
   },[]);
-
   useEffect(()=>{load();},[load]);
-
   const handleUpdate=useCallback(async(newM,newT)=>{
     setMembers(newM);setTxns(newT);setStatus('saving');
     try{await saveData(newM,newT);setStatus('ok');}
     catch{setStatus('error');setErrMsg('저장 실패 — 새로고침 후 재시도');}
   },[]);
-
   const tabs=[{id:'home',label:'잔액현황'},{id:'txn',label:'거래입력'},{id:'history',label:'거래내역'},{id:'members',label:'멤버관리'}];
-
   return(
     <div style={{maxWidth:540,margin:'0 auto',padding:'0 16px 80px'}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'20px 0 4px'}}>
         <div>
           <div style={{fontSize:20,fontWeight:700}}>연구실 장부</div>
           <div style={{fontSize:11,marginTop:2,color:status==='error'?'#dc2626':status==='saving'?'#f59e0b':'#bbb'}}>
-            {status==='loading'&&'불러오는 중...'}
-            {status==='saving'&&'저장 중...'}
-            {status==='ok'&&'구글 시트 연결됨'}
-            {status==='error'&&'⚠ '+errMsg}
+            {status==='loading'&&'불러오는 중...'}{status==='saving'&&'저장 중...'}{status==='ok'&&'구글 시트 연결됨'}{status==='error'&&'⚠ '+errMsg}
           </div>
         </div>
         <button onClick={load} style={{fontSize:12,background:'#fff',border:'1px solid #eee',borderRadius:8,padding:'6px 12px',color:'#666',fontWeight:500}}>새로고침</button>
       </div>
       <div style={{display:'flex',borderBottom:'1px solid #eee',marginBottom:24,marginTop:16}}>
         {tabs.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:'12px 4px',border:'none',borderBottom:tab===t.id?'2px solid #111':'2px solid transparent',background:'transparent',color:tab===t.id?'#111':'#999',fontSize:13,fontWeight:tab===t.id?600:400,cursor:'pointer'}}>
-            {t.label}
-          </button>
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:'12px 4px',border:'none',borderBottom:tab===t.id?'2px solid #111':'2px solid transparent',background:'transparent',color:tab===t.id?'#111':'#999',fontSize:13,fontWeight:tab===t.id?600:400,cursor:'pointer'}}>{t.label}</button>
         ))}
       </div>
       {status==='loading'&&!loadCache()?(
-        <div style={{display:'flex',justifyContent:'center',alignItems:'center',gap:12,padding:'5rem 0',color:'#999',fontSize:14}}>
-          <Spinner/> 구글 시트에서 불러오는 중...
-        </div>
+        <div style={{display:'flex',justifyContent:'center',alignItems:'center',gap:12,padding:'5rem 0',color:'#999',fontSize:14}}><Spinner/> 구글 시트에서 불러오는 중...</div>
       ):(
         <>
           {tab==='home'&&<HomeTab members={members}/>}
