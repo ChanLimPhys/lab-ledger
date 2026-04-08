@@ -23,7 +23,9 @@ button{font-family:inherit;cursor:pointer}
 const {useState,useEffect,useCallback} = React;
 
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwPzshs-qmMlPCsBIIW6VLUyqgkD3F3nPI96hAm7QbXigVZueCVo4a2wZlXlCwikCg/exec';
-const BASELINE = 50000;
+const BASELINE  = 50000;  // 충전 목표 금액
+const THRESHOLD = 20000;  // 이 금액 미만이면 충전 알림
+
 const CACHE_KEY = 'lab-ledger-cache';
 const fmt = n => new Intl.NumberFormat('ko-KR').format(Math.round(n));
 const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,5);
@@ -75,25 +77,23 @@ function computeChanges(txn){
   }
 }
 
-// 멤버별 거래 이력 계산 (현재잔액에서 역산)
-function getMemberHistory(memberId, transactions, currentBalance){
-  const relevant = [];
+function getMemberHistory(memberId,transactions,currentBalance){
+  const relevant=[];
   [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(txn=>{
-    const changes = computeChanges(txn);
-    const c = changes.find(x=>x.memberId===memberId);
-    if(c) relevant.push({txn, delta:c.delta});
+    const changes=computeChanges(txn);
+    const c=changes.find(x=>x.memberId===memberId);
+    if(c) relevant.push({txn,delta:c.delta});
   });
-  // 현재잔액에서 역산으로 누적잔액 계산
-  let bal = currentBalance;
-  const result = [];
+  let bal=currentBalance;
+  const result=[];
   for(let i=relevant.length-1;i>=0;i--){
-    result.unshift({...relevant[i], balanceAfter:bal});
-    bal -= relevant[i].delta;
+    result.unshift({...relevant[i],balanceAfter:bal});
+    bal-=relevant[i].delta;
   }
   return result;
 }
 
-function txnTypeLabel(txn, memberId){
+function txnTypeLabel(txn,memberId){
   if(txn.type==='deposit') return '입금';
   if(txn.type==='withdraw') return '출금';
   if(txn.type==='transfer') return txn.fromMemberId===memberId?'송금(출)':'송금(입)';
@@ -138,28 +138,26 @@ function ConfirmDialog({message,detail,onConfirm,onCancel}){
   );
 }
 
-function MemberHistoryPanel({member, transactions}){
-  const history = getMemberHistory(member.id, transactions, member.balance);
+function MemberHistoryPanel({member,transactions}){
+  const history=getMemberHistory(member.id,transactions,member.balance);
   if(history.length===0){
     return <div style={{padding:'16px 0 8px',textAlign:'center',color:'#bbb',fontSize:13}}>거래 내역이 없습니다</div>;
   }
   return(
     <div style={{animation:'slideDown .2s ease',marginTop:12}}>
-      {/* 누적 잔액 미니 차트 */}
       {history.length>=2&&(()=>{
         const vals=history.map(h=>h.balanceAfter);
         const min=Math.min(...vals,0);
-        const max=Math.max(...vals, BASELINE);
+        const max=Math.max(...vals,BASELINE);
         const range=max-min||1;
-        const W=100, H=40;
+        const W=100,H=40;
         const pts=vals.map((v,i)=>`${(i/(vals.length-1))*W},${H-((v-min)/range)*H}`).join(' ');
-        const baseY=H-((0-min)/range)*H;
-        const baselineY=H-((BASELINE-min)/range)*H;
+        const thresholdY=H-((THRESHOLD-min)/range)*H;
         return(
           <div style={{marginBottom:12,padding:'10px 12px',background:'#f8f8f6',borderRadius:10,border:'1px solid #eee'}}>
             <div style={{fontSize:11,color:'#999',marginBottom:6,fontWeight:600}}>잔액 추이</div>
             <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:48,display:'block'}}>
-              <line x1="0" y1={baselineY} x2={W} y2={baselineY} stroke="#fca5a5" strokeWidth="0.8" strokeDasharray="2,2"/>
+              <line x1="0" y1={thresholdY} x2={W} y2={thresholdY} stroke="#fca5a5" strokeWidth="0.8" strokeDasharray="2,2"/>
               <polyline points={pts} fill="none" stroke="#6366f1" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"/>
               {vals.map((v,i)=>(
                 <circle key={i} cx={(i/(vals.length-1))*W} cy={H-((v-min)/range)*H} r="2" fill="#6366f1"/>
@@ -167,14 +165,12 @@ function MemberHistoryPanel({member, transactions}){
             </svg>
             <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'#bbb',marginTop:2}}>
               <span>{new Date(history[0].txn.date).toLocaleDateString('ko-KR',{month:'short',day:'numeric'})}</span>
-              <span style={{color:'#fca5a5',fontSize:10}}>기준 {fmt(BASELINE)}원</span>
+              <span style={{color:'#fca5a5'}}>충전 기준 {fmt(THRESHOLD)}원</span>
               <span>{new Date(history[history.length-1].txn.date).toLocaleDateString('ko-KR',{month:'short',day:'numeric'})}</span>
             </div>
           </div>
         );
       })()}
-
-      {/* 이력 목록 (최신순) */}
       <div style={{display:'flex',flexDirection:'column',gap:6}}>
         {[...history].reverse().map(({txn,delta,balanceAfter},i)=>{
           const isPos=delta>=0;
@@ -184,7 +180,7 @@ function MemberHistoryPanel({member, transactions}){
             <div key={txn.id+i} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',borderRadius:10,background:'#fff',border:'1px solid #f0f0f0'}}>
               <div style={{width:6,height:6,borderRadius:'50%',background:isPos?'#86efac':'#fca5a5',flexShrink:0}}/>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{display:'flex',alignItems:'baseline',gap:6}}>
+                <div style={{display:'flex',alignItems:'baseline',gap:6,flexWrap:'wrap'}}>
                   <span style={{fontSize:12,color:'#999',flexShrink:0}}>{date}</span>
                   <span style={{fontSize:12,background:'#f5f5f5',color:'#666',padding:'1px 7px',borderRadius:6,flexShrink:0}}>{typeLabel}</span>
                   {txn.memo&&<span style={{fontSize:12,color:'#aaa',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{txn.memo}</span>}
@@ -203,7 +199,8 @@ function MemberHistoryPanel({member, transactions}){
 }
 
 function HomeTab({members}){
-  const below=members.filter(m=>m.balance<BASELINE);
+  // 충전 알림: THRESHOLD 미만인 멤버
+  const below=members.filter(m=>m.balance<THRESHOLD);
   const total=members.reduce((s,m)=>s+m.balance,0);
   return(
     <div>
@@ -213,15 +210,18 @@ function HomeTab({members}){
           <div style={{fontSize:22,fontWeight:700}}>{fmt(total)}원</div>
         </div>
         <div style={{background:'#fff',borderRadius:12,padding:'16px 14px',border:'1px solid #eee'}}>
-          <div style={{fontSize:11,color:'#999',marginBottom:6,fontWeight:600,letterSpacing:.5}}>기준 미달</div>
+          <div style={{fontSize:11,color:'#999',marginBottom:6,fontWeight:600,letterSpacing:.5}}>충전 필요</div>
           <div style={{fontSize:22,fontWeight:700,color:below.length>0?'#dc2626':'#16a34a'}}>{below.length}명</div>
         </div>
       </div>
       <SectionLabel>개인별 잔액</SectionLabel>
       <div style={{display:'flex',flexDirection:'column',gap:10}}>
         {[...members].sort((a,b)=>a.balance-b.balance).map(m=>{
-          const diff=m.balance-BASELINE;const low=diff<0;
+          const diff=m.balance-THRESHOLD;
+          const low=diff<0;
+          // 게이지는 BASELINE 기준
           const pct=Math.min(100,Math.max(0,(m.balance/BASELINE)*100));
+          const thresholdPct=(THRESHOLD/BASELINE)*100;
           return(
             <div key={m.id} style={{display:'flex',alignItems:'center',gap:12,padding:'13px 14px',borderRadius:12,border:'1px solid #eee',background:'#fff'}}>
               <Avatar name={m.name}/>
@@ -230,10 +230,15 @@ function HomeTab({members}){
                   <span style={{fontWeight:600,fontSize:14}}>{m.name}</span>
                   <span style={{fontSize:15,fontWeight:700,color:low?'#dc2626':'#111'}}>{fmt(m.balance)}원</span>
                 </div>
-                <div style={{height:5,borderRadius:3,background:'#f0f0f0',overflow:'hidden'}}>
+                {/* 게이지: 충전 기준선 표시 */}
+                <div style={{height:5,borderRadius:3,background:'#f0f0f0',overflow:'visible',position:'relative'}}>
                   <div style={{height:'100%',width:pct+'%',borderRadius:3,background:low?'#fca5a5':'#86efac',transition:'width .4s'}}/>
+                  {/* 충전 기준선 */}
+                  <div style={{position:'absolute',top:-2,left:thresholdPct+'%',width:1.5,height:9,background:'#f97316',borderRadius:1}}/>
                 </div>
-                <div style={{fontSize:11,color:low?'#dc2626':'#999',marginTop:4}}>{low?`${fmt(-diff)}원 부족`:`기준 초과 +${fmt(diff)}원`}</div>
+                <div style={{fontSize:11,color:low?'#dc2626':'#999',marginTop:4}}>
+                  {low?`충전 필요 — ${fmt(BASELINE-m.balance)}원 납부`:`여유 +${fmt(diff)}원`}
+                </div>
               </div>
             </div>
           );
@@ -241,18 +246,20 @@ function HomeTab({members}){
       </div>
       {below.length>0&&(
         <div style={{marginTop:24}}>
-          <SectionLabel>이번 달 정산 필요</SectionLabel>
+          <SectionLabel>충전 필요 ({fmt(THRESHOLD)}원 미만)</SectionLabel>
           <div style={{borderRadius:12,border:'1px solid #fecaca',overflow:'hidden',background:'#fff'}}>
             {below.map((m,i)=>(
               <div key={m.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 16px',borderBottom:i<below.length-1?'1px solid #f5f5f5':'none'}}>
                 <div style={{display:'flex',alignItems:'center',gap:10}}><Avatar name={m.name} size={28}/><span style={{fontSize:14,fontWeight:500}}>{m.name}</span></div>
-                <span style={{fontSize:14,fontWeight:700,color:'#dc2626'}}>+{fmt(BASELINE-m.balance)}원</span>
+                <span style={{fontSize:14,fontWeight:700,color:'#dc2626'}}>+{fmt(BASELINE-m.balance)}원 납부 필요</span>
               </div>
             ))}
           </div>
         </div>
       )}
-      <div style={{textAlign:'center',fontSize:11,color:'#bbb',marginTop:20}}>기준금액 {fmt(BASELINE)}원/월</div>
+      <div style={{textAlign:'center',fontSize:11,color:'#bbb',marginTop:20}}>
+        {fmt(THRESHOLD)}원 미만 시 충전 · 목표 {fmt(BASELINE)}원
+      </div>
     </div>
   );
 }
@@ -551,12 +558,10 @@ function MembersTab({members,transactions,onUpdate,saving}){
   const [name,setName]=useState('');const [bal,setBal]=useState('50000');const [editId,setEditId]=useState(null);const [editBal,setEditBal]=useState('');
   const [confirmId,setConfirmId]=useState(null);
   const [expandedId,setExpandedId]=useState(null);
-
   const add=async()=>{if(!name.trim())return;await onUpdate([...members,{id:uid(),name:name.trim(),balance:parseInt(bal)||0}],transactions);setName('');setBal('50000');};
   const remove=async id=>{await onUpdate(members.filter(m=>m.id!==id),transactions);setConfirmId(null);};
   const saveEdit=async id=>{await onUpdate(members.map(m=>m.id===id?{...m,balance:parseInt(editBal)||0}:m),transactions);setEditId(null);};
   const confirmMember=members.find(m=>m.id===confirmId);
-
   return(
     <div>
       {confirmId&&<ConfirmDialog message={`${confirmMember?.name} 멤버를 삭제할까요?`} detail="멤버 삭제는 되돌릴 수 없어요. 기존 거래 내역의 이름 표시에 영향을 줄 수 있어요." onConfirm={()=>remove(confirmId)} onCancel={()=>setConfirmId(null)}/>}
@@ -572,13 +577,16 @@ function MembersTab({members,transactions,onUpdate,saving}){
       <div style={{display:'flex',flexDirection:'column',gap:10}}>
         {members.map(m=>{
           const expanded=expandedId===m.id;
+          const low=m.balance<THRESHOLD;
           return(
-            <div key={m.id} style={{borderRadius:12,border:'1px solid #eee',background:'#fff',overflow:'hidden'}}>
-              {/* 멤버 카드 헤더 — 클릭하면 이력 토글 */}
+            <div key={m.id} style={{borderRadius:12,border:low?'1px solid #fecaca':'1px solid #eee',background:'#fff',overflow:'hidden'}}>
               <div style={{display:'flex',alignItems:'center',gap:12,padding:'13px 14px',cursor:'pointer'}} onClick={()=>setExpandedId(expanded?null:m.id)}>
                 <Avatar name={m.name}/>
                 <div style={{flex:1}}>
-                  <div style={{fontWeight:600,fontSize:14}}>{m.name}</div>
+                  <div style={{display:'flex',alignItems:'center',gap:6}}>
+                    <span style={{fontWeight:600,fontSize:14}}>{m.name}</span>
+                    {low&&<span style={{fontSize:10,background:'#fee2e2',color:'#dc2626',padding:'1px 7px',borderRadius:8,fontWeight:600}}>충전 필요</span>}
+                  </div>
                   {editId===m.id?(
                     <div style={{display:'flex',gap:6,marginTop:6}} onClick={e=>e.stopPropagation()}>
                       <input type="number" value={editBal} onChange={e=>setEditBal(e.target.value)} style={{fontSize:13,padding:'5px 9px',width:120}}/>
@@ -586,7 +594,7 @@ function MembersTab({members,transactions,onUpdate,saving}){
                       <button onClick={()=>setEditId(null)} style={{padding:'5px 8px',border:'none',background:'transparent',fontSize:12,color:'#999'}}>취소</button>
                     </div>
                   ):(
-                    <div style={{fontSize:13,color:'#999',marginTop:2}}>{fmt(m.balance)}원</div>
+                    <div style={{fontSize:13,color:low?'#dc2626':'#999',marginTop:2,fontWeight:low?600:400}}>{fmt(m.balance)}원</div>
                   )}
                 </div>
                 <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
@@ -595,7 +603,6 @@ function MembersTab({members,transactions,onUpdate,saving}){
                   <span style={{fontSize:12,color:'#bbb',marginLeft:2}}>{expanded?'▲':'▼'}</span>
                 </div>
               </div>
-              {/* 이력 패널 */}
               {expanded&&(
                 <div style={{borderTop:'1px solid #f5f5f5',padding:'0 14px 14px'}}>
                   <MemberHistoryPanel member={m} transactions={transactions}/>
